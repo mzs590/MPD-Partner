@@ -3,9 +3,7 @@ name: Build MPD PARTNER APK
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-  pull_request:
+    branches: [ main ]
 
 jobs:
   build:
@@ -16,91 +14,238 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Java
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android
+      - name: Setup Android
         uses: android-actions/setup-android@v3
 
-      - name: Extract and locate Android project
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Extract MPD PARTNER source
         shell: bash
         run: |
           set -e
-          rm -rf extracted
-          mkdir -p extracted
+
+          rm -rf source
+          mkdir source
 
           ZIP=$(find . -maxdepth 2 -type f -iname "*.zip" | head -n 1)
 
           if [ -z "$ZIP" ]; then
-            echo "ERROR: No ZIP file found."
-            find . -maxdepth 3 -type f
+            echo "No ZIP source found"
             exit 1
           fi
 
           echo "Using ZIP: $ZIP"
 
-          unzip -q "$ZIP" -d extracted
+          unzip -q "$ZIP" -d source
 
-          SETTINGS=$(find extracted -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1)
+          INDEX=$(find source -type f -name "index.html" | head -n 1)
 
-          if [ -z "$SETTINGS" ]; then
-            echo "ERROR: Android settings.gradle not found."
-            find extracted -maxdepth 5 -type f | head -n 100
+          if [ -z "$INDEX" ]; then
+            echo "index.html not found"
+            find source -type f | head -100
             exit 1
           fi
 
-          ANDROID_DIR=$(dirname "$SETTINGS")
+          WEB_DIR=$(dirname "$INDEX")
 
-          echo "ANDROID_DIR=$ANDROID_DIR" >> "$GITHUB_ENV"
-          echo "Android project found at: $ANDROID_DIR"
+          echo "WEB_DIR=$WEB_DIR" >> $GITHUB_ENV
 
-      - name: Prepare Gradle
+          echo "Found web app at: $WEB_DIR"
+
+      - name: Create Android project
         shell: bash
         run: |
           set -e
-          cd "$ANDROID_DIR"
 
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-          else
-            echo "ERROR: gradlew not found."
-            find . -maxdepth 3 -type f | head -n 100
-            exit 1
-          fi
+          rm -rf android
+          mkdir -p android/app/src/main/java/com/mpdpartner/app
+          mkdir -p android/app/src/main/assets
+          mkdir -p android/app/src/main/res/values
 
-      - name: Build APK
+          cat > android/settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = "MPDPartner"
+          include(":app")
+          EOF
+
+          cat > android/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.6.1' apply false
+          }
+          EOF
+
+          cat > android/app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'com.mpdpartner.app'
+              compileSdk 35
+
+              defaultConfig {
+                  applicationId "com.mpdpartner.app"
+                  minSdk 24
+                  targetSdk 35
+                  versionCode 1
+                  versionName "6.0"
+              }
+          }
+          EOF
+
+          cat > android/app/src/main/res/values/strings.xml <<'EOF'
+          <resources>
+              <string name="app_name">MPD PARTNER</string>
+          </resources>
+          EOF
+
+          cat > android/app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET"/>
+
+              <application
+                  android:theme="@style/AppTheme"
+                  android:label="MPD PARTNER"
+                  android:allowBackup="true"
+                  android:usesCleartextTraffic="true">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:screenOrientation="portrait"
+                      android:exported="true">
+
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+
+                  </activity>
+
+              </application>
+          </manifest>
+          EOF
+
+          cat > android/app/src/main/res/values/styles.xml <<'EOF'
+          <resources>
+              <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:colorAccent">#FF7A3D</item>
+                  <item name="android:navigationBarColor">#11181F</item>
+                  <item name="android:statusBarColor">#11181F</item>
+                  <item name="android:windowLightStatusBar">false</item>
+              </style>
+          </resources>
+          EOF
+
+          cat > android/app/src/main/java/com/mpdpartner/app/MainActivity.java <<'EOF'
+          package com.mpdpartner.app;
+
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+
+          public class MainActivity extends Activity {
+
+              private WebView webView;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+
+                  webView = new WebView(this);
+
+                  WebSettings settings = webView.getSettings();
+
+                  settings.setJavaScriptEnabled(true);
+                  settings.setDomStorageEnabled(true);
+                  settings.setDatabaseEnabled(true);
+                  settings.setAllowFileAccess(true);
+                  settings.setAllowContentAccess(true);
+
+                  webView.setWebViewClient(new WebViewClient());
+
+                  setContentView(webView);
+
+                  webView.loadUrl("file:///android_asset/index.html");
+              }
+
+              @Override
+              public void onBackPressed() {
+                  if (webView.canGoBack()) {
+                      webView.goBack();
+                  } else {
+                      super.onBackPressed();
+                  }
+              }
+          }
+          EOF
+
+      - name: Copy MPD PARTNER application files
         shell: bash
         run: |
           set -e
-          cd "$ANDROID_DIR"
+
+          cp -r "$WEB_DIR"/. android/app/src/main/assets/
+
+          echo "Application files copied:"
+          find android/app/src/main/assets -type f | head -50
+
+      - name: Create Gradle wrapper
+        shell: bash
+        run: |
+          cd android
+          gradle wrapper --gradle-version 8.10.2
+
+      - name: Build MPD PARTNER APK
+        shell: bash
+        run: |
+          cd android
+          chmod +x gradlew
           ./gradlew assembleDebug --stacktrace
 
-      - name: Locate APK
+      - name: Prepare APK
         shell: bash
         run: |
-          set -e
+          mkdir -p output
 
-          APK=$(find "$ANDROID_DIR" -type f -name "*.apk" | head -n 1)
+          APK=$(find android/app/build/outputs/apk/debug -type f -name "*.apk" | head -n 1)
 
           if [ -z "$APK" ]; then
-            echo "ERROR: APK was not generated."
-            find "$ANDROID_DIR" -type f | grep -E "apk|outputs" | head -n 100 || true
+            echo "APK not found"
             exit 1
           fi
 
-          mkdir -p output
-          cp "$APK" output/MPD-PARTNER.apk
+          cp "$APK" output/MPD-PARTNER-V6.apk
 
-          echo "APK_PATH=output/MPD-PARTNER.apk" >> "$GITHUB_ENV"
+          ls -lh output
 
-          ls -lh output/MPD-PARTNER.apk
-
-      - name: Upload APK
+      - name: Upload MPD PARTNER APK
         uses: actions/upload-artifact@v4
         with:
-          name: MPD-PARTNER-APK
-          path: output/MPD-PARTNER.apk
+          name: MPD-PARTNER-V6-APK
+          path: output/MPD-PARTNER-V6.apk
           if-no-files-found: error
