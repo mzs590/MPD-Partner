@@ -24,7 +24,7 @@ jobs:
 
       - name: Extract project
         run: |
-          unzip -q MPD_PARTNER_ANDROID_COMPLETE_SOURCE.zip -d extracted
+          unzip -q MPD_PARTNER_ANDROID_COMPLETE_SOURCE_FIXED_ARM64.zip -d extracted
           cd extracted/MPDPartnerAndroid
           echo "ANDROID_DIR=$(pwd)" >> $GITHUB_ENV
 
