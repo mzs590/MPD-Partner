@@ -5,12 +5,14 @@ on:
   push:
     branches:
       - main
+  pull_request:
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -18,35 +20,87 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
       - name: Set up Android
         uses: android-actions/setup-android@v3
 
-      - name: Extract project
+      - name: Extract and locate Android project
+        shell: bash
         run: |
-          ZIP=$(find . -maxdepth 1 -type f -name "*.zip" | head -n 1)
-          echo "Using ZIP: $ZIP"
-          test -n "$ZIP"
-          unzip -q "$ZIP" -d extracted
-          cd extracted/MPDPartnerAndroid
-          test -f settings.gradle
-          echo "ANDROID_DIR=$(pwd)" >> $GITHUB_ENV
+          set -e
+          rm -rf extracted
+          mkdir -p extracted
 
-      - name: Install Gradle
+          ZIP=$(find . -maxdepth 2 -type f -iname "*.zip" | head -n 1)
+
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: No ZIP file found."
+            find . -maxdepth 3 -type f
+            exit 1
+          fi
+
+          echo "Using ZIP: $ZIP"
+
+          unzip -q "$ZIP" -d extracted
+
+          SETTINGS=$(find extracted -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1)
+
+          if [ -z "$SETTINGS" ]; then
+            echo "ERROR: Android settings.gradle not found."
+            find extracted -maxdepth 5 -type f | head -n 100
+            exit 1
+          fi
+
+          ANDROID_DIR=$(dirname "$SETTINGS")
+
+          echo "ANDROID_DIR=$ANDROID_DIR" >> "$GITHUB_ENV"
+          echo "Android project found at: $ANDROID_DIR"
+
+      - name: Prepare Gradle
+        shell: bash
         run: |
-          wget -q https://services.gradle.org/distributions/gradle-8.10.2-bin.zip -O /tmp/gradle.zip
-          unzip -q /tmp/gradle.zip -d /tmp
-          echo "/tmp/gradle-8.10.2/bin" >> $GITHUB_PATH
+          set -e
+          cd "$ANDROID_DIR"
+
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+          else
+            echo "ERROR: gradlew not found."
+            find . -maxdepth 3 -type f | head -n 100
+            exit 1
+          fi
 
       - name: Build APK
+        shell: bash
         run: |
+          set -e
           cd "$ANDROID_DIR"
-          gradle --no-daemon assembleDebug
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Locate APK
+        shell: bash
+        run: |
+          set -e
+
+          APK=$(find "$ANDROID_DIR" -type f -name "*.apk" | head -n 1)
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK was not generated."
+            find "$ANDROID_DIR" -type f | grep -E "apk|outputs" | head -n 100 || true
+            exit 1
+          fi
+
+          mkdir -p output
+          cp "$APK" output/MPD-PARTNER.apk
+
+          echo "APK_PATH=output/MPD-PARTNER.apk" >> "$GITHUB_ENV"
+
+          ls -lh output/MPD-PARTNER.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: MPD_PARTNER_APK
-          path: extracted/MPDPartnerAndroid/app/build/outputs/apk/debug/app-debug.apk
+          name: MPD-PARTNER-APK
+          path: output/MPD-PARTNER.apk
           if-no-files-found: error
