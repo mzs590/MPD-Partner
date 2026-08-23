@@ -1,46 +1,8 @@
-name: Build MPD PARTNER APK
-
-on:
-  workflow_dispatch:
-  push:
-    branches: [main]
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Set up Android
-        uses: android-actions/setup-android@v3
-
       - name: Extract project
         run: |
-          unzip -q MPD_PARTNER_ANDROID_COMPLETE_SOURCE_FIXED_ARM64.zip -d extracted
+          ZIP=$(find . -maxdepth 1 -type f -name "*.zip" | head -n 1)
+          echo "Using ZIP: $ZIP"
+          unzip -q "$ZIP" -d extracted
           cd extracted/MPDPartnerAndroid
+          test -f settings.gradle
           echo "ANDROID_DIR=$(pwd)" >> $GITHUB_ENV
-
-      - name: Install Gradle
-        run: |
-          wget -q https://services.gradle.org/distributions/gradle-8.10.2-bin.zip -O /tmp/gradle.zip
-          unzip -q /tmp/gradle.zip -d /tmp
-          echo "/tmp/gradle-8.10.2/bin" >> $GITHUB_PATH
-
-      - name: Build APK
-        run: |
-          cd "$ANDROID_DIR"
-          gradle --no-daemon assembleDebug
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: MPD_PARTNER_APK
-          path: extracted/MPDPartnerAndroid/app/build/outputs/apk/debug/app-debug.apk
